@@ -358,8 +358,10 @@ class MainWindow(QMainWindow):
         self.dst_mac_in = QLineEdit("01:0C:CD:04:00:01")
         self.src_mac_in = QLineEdit(get_if_hwaddr(self.iface_in.currentText()))
         self.iface_in.currentTextChanged.connect(lambda iface: self.src_mac_in.setText(get_if_hwaddr(iface)))
-
-        self.vlan_id_in = QSpinBox(minimum=0, maximum=4095, value=0)
+        self.vlan_id_in = QSpinBox()
+        self.vlan_id_in.setMinimum(0)
+        self.vlan_id_in.setMaximum(4095)
+        self.vlan_id_in.setValue(0)
         self.appid_in = QLineEdit("4000")
         self.svid_in = QLineEdit("SimulatedSVStream")
         self.freq_in = QComboBox()

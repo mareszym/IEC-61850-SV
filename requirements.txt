@@ -1,0 +1,6 @@
+numpy
+matplotlib
+pyqtgraph
+pyqt6
+scapy
+pyqt6-sip
