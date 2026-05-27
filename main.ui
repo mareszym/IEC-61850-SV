@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="windowTitle">
+   <string>IEC 61850-9-2 SV Simulator</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="mainLayout">
+
+    <!-- Tabs -->
+    <item>
+     <widget class="QTabWidget" name="tabWidget">
+
+      <!-- TAB 1: Publisher -->
+      <widget class="QWidget" name="tab_publisher">
+       <attribute name="title">
+        <string>Publisher</string>
+       </attribute>
+       <layout class="QVBoxLayout">
+
+        <item>
+         <widget class="QGroupBox" name="publisherGroup">
+          <property name="title">
+           <string>SV Publisher Settings</string>
+          </property>
+          <layout class="QFormLayout">
+
+           <item row="0" column="0">
+            <widget class="QLabel">
+             <property name="text">
+              <string>Interface:</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QComboBox" name="interfaceCombo"/>
+           </item>
+
+           <item row="1" column="0">
+            <widget class="QLabel">
+             <property name="text">
+              <string>VLAN ID:</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QSpinBox" name="vlanSpinBox">
+             <property name="minimum">
+              <number>0</number>
+             </property>
+             <property name="maximum">
+              <number>4095</number>
+             </property>
+            </widget>
+           </item>
+
+           <item row="2" column="0">
+            <widget class="QLabel">
+             <property name="text">
+              <string>Frequency [Hz]:</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="1">
+            <widget class="QDoubleSpinBox" name="freqSpinBox"/>
+           </item>
+
+          </layout>
+         </widget>
+        </item>
+
+        <item>
+         <layout class="QHBoxLayout">
+          <item>
+           <widget class="QPushButton" name="startButton">
+            <property name="text">
+             <string>Start</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="stopButton">
+            <property name="text">
+             <string>Stop</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+
+       </layout>
+      </widget>
+
+      <!-- TAB 2: Decoder -->
+      <widget class="QWidget" name="tab_decoder">
+       <attribute name="title">
+        <string>Decoder</string>
+       </attribute>
+       <layout class="QVBoxLayout">
+
+        <item>
+         <widget class="QGroupBox" name="decoderGroup">
+          <property name="title">
+           <string>Decoded Data</string>
+          </property>
+          <layout class="QVBoxLayout">
+           <item>
+            <widget class="QTextEdit" name="decoderText"/>
+           </item>
+          </layout>
+         </widget>
+        </item>
+
+       </layout>
+      </widget>
+
+     </widget>
+    </item>
+
+   </layout>
+  </widget>
+ </widget>
+</ui>
