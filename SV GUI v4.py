@@ -473,7 +473,7 @@ class MainWindow(QMainWindow):
 
         self.iface_in = QComboBox()
 
-        for display, npf in self._get_active_windows_interfaces():
+        for display, npf in self._get_active_windows_interfaces:
             self.iface_in.addItem(display, npf)
 
         # --- Source MAC ---
@@ -782,32 +782,33 @@ class MainWindow(QMainWindow):
                 f"Błąd podczas wczytywania konfiguracji:\n{e}"
             )
 
-    def _get_windows_iface_map(self):
-        """
-        Zwraca listę krotek:
-        (display_name, npf_name)
-        """
-        npf_ifaces = get_if_list()
-        win_ifaces = psutil.net_if_addrs()
+    # def _get_windows_iface_map(self):
+    #     """
+    #     Zwraca listę krotek:
+    #     (display_name, npf_name)
+    #     """
+    #     npf_ifaces = get_if_list()
+    #     win_ifaces = psutil.net_if_addrs()
+    #
+    #     result = []
+    #
+    #     for npf in npf_ifaces:
+    #         if not npf.startswith(r"\Device\NPF_"):
+    #             continue
+    #
+    #         guid = npf.replace(r"\Device\NPF_{", "").replace("}", "").upper()
+    #         display = npf  # fallback
+    #
+    #         for win_name in win_ifaces.keys():
+    #             if guid in win_name.upper():
+    #                 display = win_name
+    #                 break
+    #
+    #         result.append((display, npf))
+    #
+    #     return result
 
-        result = []
-
-        for npf in npf_ifaces:
-            if not npf.startswith(r"\Device\NPF_"):
-                continue
-
-            guid = npf.replace(r"\Device\NPF_{", "").replace("}", "").upper()
-            display = npf  # fallback
-
-            for win_name in win_ifaces.keys():
-                if guid in win_name.upper():
-                    display = win_name
-                    break
-
-            result.append((display, npf))
-
-        return result
-
+    @property
     def _get_active_windows_interfaces(self):
         """
         Zwraca listę krotek:
