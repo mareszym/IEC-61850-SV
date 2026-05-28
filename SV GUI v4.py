@@ -4,14 +4,20 @@ import sys
 import time
 import struct
 import numpy as np
+import os
+import xml.etree.ElementTree as ET
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox,
-    QFormLayout, QTabWidget, QTextEdit, QGroupBox
+    QFormLayout, QTabWidget, QTextEdit, QGroupBox, QMessageBox
 )
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot, Qt
 import pyqtgraph as pg
+from numpy.ma.core import minimum, maximum
+import psutil
 from scapy.all import Ether, Dot1Q, Raw, sendp, sniff, get_if_list, get_if_hwaddr
+from scapy.arch import get_windows_if_list
+
 
 # ==============================================================================
 #  1. SV PUBLISHER LOGIC (Manual ASN.1 BER Encoding)
@@ -82,13 +88,79 @@ class SVWorker(QObject):
         vlan_layer = Dot1Q(vlan=self.config['vlan_id'], prio=4) if self.config['vlan_id'] > 0 else None
 
         # Pre-generate one full cycle of waveform data for efficiency
+
+        w = 2 * np.pi * freq
+        v_amp = self.config['v_amp']
+        i_amp = self.config['i_amp']
+        v3h_amp = self.config['v3H_amp_in']/100
+        v5h_amp = self.config['v5H_amp_in']/100
+        cos_phi = self.config['cos_phi']
+        phi = np.arccos(cos_phi)  # [rad]
+
         t = np.arange(0, sps) * time_step
-        va = self.config['v_amp'] * np.sin(2 * np.pi * freq * t)
-        vb = self.config['v_amp'] * np.sin(2 * np.pi * freq * t - 2 * np.pi / 3)
-        vc = self.config['v_amp'] * np.sin(2 * np.pi * freq * t + 2 * np.pi / 3)
-        ia = self.config['i_amp'] * np.sin(2 * np.pi * freq * t)
-        ib = self.config['i_amp'] * np.sin(2 * np.pi * freq * t - 2 * np.pi / 3)
-        ic = self.config['i_amp'] * np.sin(2 * np.pi * freq * t + 2 * np.pi / 3)
+        # va = self.config['v_amp'] * np.sin(2 * np.pi * freq * t) + (self.config['v3H_amp_in']/100)*self.config['v_amp'] * np.sin(2 * np.pi * 3* freq * t) + (self.config['v5H_amp_in']/100)*self.config['v_amp'] * np.sin(2 * np.pi * 5* freq * t)
+        # vb = self.config['v_amp'] * np.sin(2 * np.pi * freq * t - 2 * np.pi / 3)
+        # vc = self.config['v_amp'] * np.sin(2 * np.pi * freq * t + 2 * np.pi / 3)
+        # ia = self.config['i_amp'] * np.sin(2 * np.pi * freq * t)
+        # ib = self.config['i_amp'] * np.sin(2 * np.pi * freq * t - 2 * np.pi / 3)
+        # ic = self.config['i_amp'] * np.sin(2 * np.pi * freq * t + 2 * np.pi / 3)
+
+        # --- VOLTAGE ---
+        va = (
+                v_amp * np.sin(w * t) +
+                v3h_amp * v_amp * np.sin(3 * w * t) +
+                v5h_amp * v_amp * np.sin(5 * w * t)
+        )
+
+        vb = (
+                v_amp * np.sin(w * t - 2 * np.pi / 3) +
+                v3h_amp * v_amp * np.sin(3 * w * t) +
+                v5h_amp * v_amp * np.sin(5 * w * t - 10 * np.pi / 3)
+        )
+
+        vc = (
+                v_amp * np.sin(w * t + 2 * np.pi / 3) +
+                v3h_amp * v_amp * np.sin(3 * w * t) +
+                v5h_amp * v_amp * np.sin(5 * w * t + 10 * np.pi / 3)
+        )
+
+        # # --- CURRENT ---
+        # ia = (
+        #         i_amp * np.sin(w * t) +
+        #         v3h_amp * i_amp * np.sin(3 * w * t) +
+        #         v5h_amp * i_amp * np.sin(5 * w * t)
+        # )
+        #
+        # ib = (
+        #         i_amp * np.sin(w * t - 2 * np.pi / 3) +
+        #         v3h_amp * i_amp * np.sin(3 * w * t) +
+        #         v5h_amp * i_amp * np.sin(5 * w * t - 10 * np.pi / 3)
+        # )
+        #
+        # ic = (
+        #         i_amp * np.sin(w * t + 2 * np.pi / 3) +
+        #         v3h_amp * i_amp * np.sin(3 * w * t) +
+        #         v5h_amp * i_amp * np.sin(5 * w * t + 10 * np.pi / 3)
+        # )
+
+        # --- CURRENT with cos(phi) ---
+        ia = (
+                i_amp * np.sin(w * t - phi) +
+                v3h_amp * i_amp * np.sin(3 * w * t) +
+                v5h_amp * i_amp * np.sin(5 * w * t)
+        )
+
+        ib = (
+                i_amp * np.sin(w * t - 2 * np.pi / 3 - phi) +
+                v3h_amp * i_amp * np.sin(3 * w * t) +
+                v5h_amp * i_amp * np.sin(5 * w * t - 10 * np.pi / 3)
+        )
+
+        ic = (
+                i_amp * np.sin(w * t + 2 * np.pi / 3 - phi) +
+                v3h_amp * i_amp * np.sin(3 * w * t) +
+                v5h_amp * i_amp * np.sin(5 * w * t + 10 * np.pi / 3)
+        )
 
         gui_buffer = []
         
@@ -277,13 +349,29 @@ class MainWindow(QMainWindow):
                 color: #000000;
                 font-weight: bold;
             }
-            QLineEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+            QLineEdit, QTextEdit, QComboBox {
                 background-color: #ffffff;
                 border: 1px solid #c0c0c0;
                 border-radius: 4px;
                 padding: 4px;
                 color: #000000;
             }
+            
+            QSpinBox, QDoubleSpinBox {
+                background-color: #ffffff;
+                border: 1px solid #c0c0c0;
+                border-radius: 4px;
+                padding-right: 20px;   /* miejsce na przyciski */
+                color: #000000;
+            }
+            
+            /* Przyciski ▲▼ */
+            QSpinBox::up-button, QDoubleSpinBox::up-button,
+            QSpinBox::down-button, QDoubleSpinBox::down-button {
+                width: 22px;
+                height: 12px;
+            }
+
             QPushButton {
                 background-color: #0078d7;
                 color: white;
@@ -333,7 +421,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.tabs)
 
         # --- CREDIT LABEL INSERTION ---
-        credit_label = QLabel("<b>Developed by Sugandh Pratap</b>")
+        credit_label = QLabel("<b>Developed by Sugandh Pratap, Powered By Mareszym - 2026</b>")
         credit_label.setStyleSheet("font-size: 12pt; color: #333333;")
         credit_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(credit_label)
@@ -351,13 +439,57 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(controls_group, 1)
         
         form_layout = QFormLayout()
-        available_ifaces = get_if_list()
+        # available_ifaces = get_if_list()
+        # self.iface_in = QComboBox()
+        # self.iface_in.addItems(available_ifaces)
+        # self.src_mac_in = QLineEdit(get_if_hwaddr(self.iface_in.currentText()))
+        # self.iface_in.currentTextChanged.connect(lambda iface: self.src_mac_in.setText(get_if_hwaddr(iface)))
+
+        # self.iface_in = QComboBox()
+        #
+        # for iface in get_windows_if_list():
+        #     name = iface.get("name", "Unknown")
+        #     desc = iface.get("description", "")
+        #     guid = iface.get("guid")
+        #
+        #     if not guid:
+        #         continue
+        #
+        #     # ✅ KLUCZOWE: z GUID robimy nazwę NPF
+        #     npf = rf"\Device\NPF_{guid}"
+        #
+        #     display = f"{name} – {desc}"
+        #     self.iface_in.addItem(display, npf)
+        #
+        # # ✅ Source MAC – POPRAWNIE
+        # current_npf = self.iface_in.currentData()
+        # self.src_mac_in = QLineEdit(get_if_hwaddr(current_npf))
+        #
+        # self.iface_in.currentIndexChanged.connect(
+        #     lambda _: self.src_mac_in.setText(
+        #         get_if_hwaddr(self.iface_in.currentData())
+        #     )
+        # )
+
         self.iface_in = QComboBox()
-        self.iface_in.addItems(available_ifaces)
-        
+
+        for display, npf in self._get_active_windows_interfaces():
+            self.iface_in.addItem(display, npf)
+
+        # --- Source MAC ---
+        current_npf = self.iface_in.currentData()
+        if current_npf:
+            self.src_mac_in = QLineEdit(get_if_hwaddr(current_npf))
+        else:
+            self.src_mac_in = QLineEdit("00:00:00:00:00:00")
+
+        self.iface_in.currentIndexChanged.connect(
+            lambda _: self.src_mac_in.setText(
+                get_if_hwaddr(self.iface_in.currentData())
+            )
+        )
+
         self.dst_mac_in = QLineEdit("01:0C:CD:04:00:01")
-        self.src_mac_in = QLineEdit(get_if_hwaddr(self.iface_in.currentText()))
-        self.iface_in.currentTextChanged.connect(lambda iface: self.src_mac_in.setText(get_if_hwaddr(iface)))
         self.vlan_id_in = QSpinBox()
         self.vlan_id_in.setMinimum(0)
         self.vlan_id_in.setMaximum(4095)
@@ -366,10 +498,15 @@ class MainWindow(QMainWindow):
         self.svid_in = QLineEdit("SimulatedSVStream")
         self.freq_in = QComboBox()
         self.freq_in.addItems(["50", "60"])
+        self.freq_in.setCurrentIndex(0)
         self.sps_in = QComboBox()
         self.sps_in.addItems(["80", "256"])
+        self.sps_in.setCurrentIndex(1)
         self.v_amp_in = QDoubleSpinBox(minimum=0, maximum=10000.0, value=100.0, singleStep=10.0)
         self.i_amp_in = QDoubleSpinBox(minimum=0, maximum=1000.0, value=5.0, singleStep=0.5)
+        self.v3H_amp_in = QDoubleSpinBox(minimum=0, maximum=100, value=0, singleStep=1)
+        self.v5H_amp_in = QDoubleSpinBox(minimum=0, maximum=100, value=0, singleStep=1)
+        self.cos_phi_in = QDoubleSpinBox(minimum=0, maximum=1, value=1, singleStep=0.05)
 
         form_layout.addRow("Network Interface:", self.iface_in)
         form_layout.addRow("Destination MAC:", self.dst_mac_in)
@@ -381,14 +518,24 @@ class MainWindow(QMainWindow):
         form_layout.addRow("Samples/Cycle:", self.sps_in)
         form_layout.addRow("Voltage Amplitude (V):", self.v_amp_in)
         form_layout.addRow("Current Amplitude (A):", self.i_amp_in)
+        form_layout.addRow("3th-harmonic Voltage (%):", self.v3H_amp_in)
+        form_layout.addRow("5th-harmonic Voltage (%):", self.v5H_amp_in)
+        form_layout.addRow("cos φ:", self.cos_phi_in)
+
         controls_layout.addLayout(form_layout)
 
         self.start_button = QPushButton("Start Simulation")
         self.start_button.clicked.connect(self.start_simulation)
         self.stop_button = QPushButton("Stop Simulation", enabled=False)
         self.stop_button.clicked.connect(self.stop_simulation)
+        self.save_button = QPushButton("Save Configuration", enabled=True)
+        self.save_button.clicked.connect(self.save_config)
+        self.load_button = QPushButton("Load Configuration", enabled=True)
+        self.load_button.clicked.connect(self.load_config)
         controls_layout.addWidget(self.start_button)
         controls_layout.addWidget(self.stop_button)
+        controls_layout.addWidget(self.save_button)
+        controls_layout.addWidget(self.load_button)
         
         self.status_label = QLabel("Status: Stopped")
         self.packets_label = QLabel("Packets Sent: 0")
@@ -453,11 +600,13 @@ class MainWindow(QMainWindow):
 
     def start_simulation(self):
         config = {
-            "iface": self.iface_in.currentText(), "dst_mac": self.dst_mac_in.text(),
+            "iface": self.iface_in.currentData(), "dst_mac": self.dst_mac_in.text(),
             "src_mac": self.src_mac_in.text(), "vlan_id": self.vlan_id_in.value(),
             "appid": self.appid_in.text(), "sv_id": self.svid_in.text(),
             "freq": int(self.freq_in.currentText()), "sps": int(self.sps_in.currentText()),
             "v_amp": self.v_amp_in.value(), "i_amp": self.i_amp_in.value(),
+            "v3H_amp_in": self.v3H_amp_in.value(), "v5H_amp_in": self.v5H_amp_in.value(),
+            "cos_phi": self.cos_phi_in.value()
         }
         self.thread = QThread(); self.worker = SVWorker(config)
         self.worker.moveToThread(self.thread)
@@ -521,6 +670,191 @@ class MainWindow(QMainWindow):
         self.stop_simulation()
         self.stop_decoding()
         event.accept()
+
+    def save_config(self):
+        # Ścieżka do katalogu programu
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(base_dir, "config.xml")
+
+        # Główny element XML
+        root = ET.Element("SVSimulatorConfig")
+
+        # Pomocnicza funkcja
+        def add(parent, name, value):
+            el = ET.SubElement(parent, name)
+            el.text = str(value)
+
+        # --- Parametry sieciowe ---
+        network = ET.SubElement(root, "Network")
+        add(network, "Interface", self.iface_in.currentData())
+        add(network, "DestinationMAC", self.dst_mac_in.text())
+        # add(network, "SourceMAC", self.src_mac_in.text())
+        add(network, "VLAN_ID", self.vlan_id_in.value())
+        add(network, "APPID", self.appid_in.text())
+        add(network, "svID", self.svid_in.text())
+
+        # --- Parametry próbkowania ---
+        sampling = ET.SubElement(root, "Sampling")
+        add(sampling, "Frequency_Hz", int(self.freq_in.currentText()))
+        add(sampling, "SamplesPerCycle", int(self.sps_in.currentText()))
+
+        # --- Parametry elektryczne ---
+        electrical = ET.SubElement(root, "Electrical")
+        add(electrical, "VoltageAmplitude_V", self.v_amp_in.value())
+        add(electrical, "CurrentAmplitude_A", self.i_amp_in.value())
+        add(electrical, "Voltage3H_percent", self.v3H_amp_in.value())
+        add(electrical, "Voltage5H_percent", self.v5H_amp_in.value())
+        add(electrical, "CosPhi", self.cos_phi_in.value())
+
+        # Zapis do pliku
+        tree = ET.ElementTree(root)
+        tree.write(config_path, encoding="utf-8", xml_declaration=True)
+
+        # Informacja w GUI (opcjonalnie)
+        self.status_label.setText(f"Configuration saved to {config_path}")
+
+    def load_config(self):
+        # Katalog programu
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(base_dir, "config.xml")
+
+        # Sprawdzenie czy plik istnieje
+        if not os.path.exists(config_path):
+            QMessageBox.warning(
+                self,
+                "Load Configuration",
+                "Plik config.xml nie istnieje."
+            )
+            return
+
+        try:
+            tree = ET.parse(config_path)
+            root = tree.getroot()
+
+            # --- Network ---
+            network = root.find("Network")
+            if network is not None:
+
+                saved_npf = network.findtext("Interface")
+
+                iface_found = False
+
+                if saved_npf:
+                    for i in range(self.iface_in.count()):
+                        if self.iface_in.itemData(i) == saved_npf:
+                            self.iface_in.setCurrentIndex(i)
+                            iface_found = True
+                            break
+
+                if not iface_found:
+                    # fallback – zostaje aktualnie wybrany (np. pierwszy aktywny)
+                    self.status_label.setText(
+                        "Saved network interface not available – using current active interface"
+                    )
+
+                self.dst_mac_in.setText(network.findtext("DestinationMAC", ""))
+                # self.src_mac_in.setText(network.findtext("SourceMAC", ""))
+                self.vlan_id_in.setValue(int(network.findtext("VLAN_ID", 0)))
+                self.appid_in.setText(network.findtext("APPID", ""))
+                self.svid_in.setText(network.findtext("svID", ""))
+
+            # --- Sampling ---
+            sampling = root.find("Sampling")
+            if sampling is not None:
+                self.freq_in.setCurrentText(sampling.findtext("Frequency_Hz", "50"))
+                self.sps_in.setCurrentText(sampling.findtext("SamplesPerCycle", "256"))
+
+            # --- Electrical ---
+            electrical = root.find("Electrical")
+            if electrical is not None:
+                self.v_amp_in.setValue(float(electrical.findtext("VoltageAmplitude_V", 0)))
+                self.i_amp_in.setValue(float(electrical.findtext("CurrentAmplitude_A", 0)))
+                self.v3H_amp_in.setValue(float(electrical.findtext("Voltage3H_percent", 0)))
+                self.v5H_amp_in.setValue(float(electrical.findtext("Voltage5H_percent", 0)))
+                self.cos_phi_in.setValue(float(electrical.findtext("CosPhi", 1)))
+
+            self.status_label.setText("Configuration loaded from config.xml")
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Load Configuration Error",
+                f"Błąd podczas wczytywania konfiguracji:\n{e}"
+            )
+
+    def _get_windows_iface_map(self):
+        """
+        Zwraca listę krotek:
+        (display_name, npf_name)
+        """
+        npf_ifaces = get_if_list()
+        win_ifaces = psutil.net_if_addrs()
+
+        result = []
+
+        for npf in npf_ifaces:
+            if not npf.startswith(r"\Device\NPF_"):
+                continue
+
+            guid = npf.replace(r"\Device\NPF_{", "").replace("}", "").upper()
+            display = npf  # fallback
+
+            for win_name in win_ifaces.keys():
+                if guid in win_name.upper():
+                    display = win_name
+                    break
+
+            result.append((display, npf))
+
+        return result
+
+    def _get_active_windows_interfaces(self):
+        """
+        Zwraca listę krotek:
+        (display_text, npf_name)
+        TYLKO interfejsy:
+        - status UP
+        - mają adres IP
+        """
+        win_ifaces = get_windows_if_list()
+        stats = psutil.net_if_stats()
+        addrs = psutil.net_if_addrs()
+
+        result = []
+
+        for iface in win_ifaces:
+            name = iface.get("name")
+            desc = iface.get("description", "")
+            guid = iface.get("guid")
+
+            if not name or not guid:
+                continue
+
+            # ✅ interfejs musi istnieć w psutil
+            if name not in stats or name not in addrs:
+                continue
+
+            # ✅ musi być UP (fizycznie aktywny)
+            if not stats[name].isup:
+                continue
+
+            # ✅ musi mieć adres IP (IPv4 lub IPv6)
+            has_ip = any(
+                addr.family.name in ("AF_INET", "AF_INET6")
+                for addr in addrs[name]
+            )
+            if not has_ip:
+                continue
+
+            # ✅ poprawna nazwa dla Scapy
+            npf = rf"\Device\NPF_{guid}"
+
+            display = f"{name} – {desc}".strip()
+            result.append((display, npf))
+
+        return result
+
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
