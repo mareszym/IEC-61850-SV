@@ -5,6 +5,7 @@ import time
 import struct
 import numpy as np
 import os
+import psutil
 import xml.etree.ElementTree as ET
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -13,10 +14,15 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot, Qt
 import pyqtgraph as pg
-from numpy.ma.core import minimum, maximum
-import psutil
-from scapy.all import Ether, Dot1Q, Raw, sendp, sniff, get_if_list, get_if_hwaddr
-from scapy.arch import get_windows_if_list
+
+# from scapy.all import Ether, Dot1Q, Raw, sendp, sniff, get_if_list, get_if_hwaddr
+
+from scapy.layers.l2 import Ether, Dot1Q
+from scapy.packet import Raw
+from scapy.sendrecv import sendp, sniff
+from scapy.all import get_if_list, get_if_hwaddr
+
+import scapy.arch
 
 
 # ==============================================================================
@@ -36,7 +42,8 @@ class SVWorker(QObject):
         self._is_running = True
         self.packet_count = 0
 
-    def _create_tlv(self, tag, value_bytes):
+    @staticmethod
+    def _create_tlv(tag, value_bytes):
         """Creates a simple ASN.1 Type-Length-Value structure."""
         tag_byte = bytes([tag])
         # This assumes length is less than 128, which is true for these fields
@@ -98,7 +105,7 @@ class SVWorker(QObject):
         phi = np.arccos(cos_phi)  # [rad]
 
         t = np.arange(0, sps) * time_step
-        # va = self.config['v_amp'] * np.sin(2 * np.pi * freq * t) + (self.config['v3H_amp_in']/100)*self.config['v_amp'] * np.sin(2 * np.pi * 3* freq * t) + (self.config['v5H_amp_in']/100)*self.config['v_amp'] * np.sin(2 * np.pi * 5* freq * t)
+        # va = self.config['v_amp'] * np.sin(2 * np.pi * freq * t)
         # vb = self.config['v_amp'] * np.sin(2 * np.pi * freq * t - 2 * np.pi / 3)
         # vc = self.config['v_amp'] * np.sin(2 * np.pi * freq * t + 2 * np.pi / 3)
         # ia = self.config['i_amp'] * np.sin(2 * np.pi * freq * t)
@@ -226,7 +233,8 @@ class DecoderWorker(QObject):
         self.iface = iface
         self.running = False
 
-    def _parse_tlv(self, data):
+    @staticmethod
+    def _parse_tlv(data):
         """Parses a stream of TLVs and returns a dictionary."""
         decoded = {}
         i = 0
@@ -268,7 +276,7 @@ class DecoderWorker(QObject):
         
         decoded = {'APPID': hex(appid), 'Simulated': is_simulated}
         
-        no_asdu_tag = sav_pdu_content[0]
+        # no_asdu_tag = sav_pdu_content[0]
         no_asdu_len = sav_pdu_content[1]
         no_asdu_val = int.from_bytes(sav_pdu_content[2:2+no_asdu_len], 'big')
         decoded['noASDU'] = no_asdu_val
@@ -298,7 +306,7 @@ class DecoderWorker(QObject):
             output = f"--- SV Packet ---\n"
             output += f"  Source MAC: {packet[Ether].src}\n"
             for key, value in decoded_data.items():
-                if key == 'DataSet':
+                if key == 'DataSet' and isinstance(value, dict): #jawne sprawdzenie zmiennej value - typ słownikowy
                     output += f"  {key}:\n"
                     for k, v in value.items():
                         output += f"    {k:<4}: {v:.4f}" if isinstance(v, float) else f"    {k:<4}: {v}"
@@ -323,6 +331,8 @@ class DecoderWorker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.plot_data_v = None
+        self.plot_data_i = None
         self.setWindowTitle("IEC 61850-9-2 SV Simulator")
         self.setGeometry(100, 100, 1200, 800)
 
@@ -502,11 +512,31 @@ class MainWindow(QMainWindow):
         self.sps_in = QComboBox()
         self.sps_in.addItems(["80", "256"])
         self.sps_in.setCurrentIndex(1)
-        self.v_amp_in = QDoubleSpinBox(minimum=0, maximum=10000.0, value=100.0, singleStep=10.0)
-        self.i_amp_in = QDoubleSpinBox(minimum=0, maximum=1000.0, value=5.0, singleStep=0.5)
-        self.v3H_amp_in = QDoubleSpinBox(minimum=0, maximum=100, value=0, singleStep=1)
-        self.v5H_amp_in = QDoubleSpinBox(minimum=0, maximum=100, value=0, singleStep=1)
-        self.cos_phi_in = QDoubleSpinBox(minimum=0, maximum=1, value=1, singleStep=0.05)
+
+        self.v_amp_in = QDoubleSpinBox()
+        self.v_amp_in.setRange(0, 10000.0)
+        self.v_amp_in.setValue(100.0)
+        self.v_amp_in.setSingleStep(10.0)
+
+        self.i_amp_in = QDoubleSpinBox()
+        self.i_amp_in.setRange(0, 1000.0)
+        self.i_amp_in.setValue(5.0)
+        self.i_amp_in.setSingleStep(0.5)
+
+        self.v3H_amp_in = QDoubleSpinBox()
+        self.v3H_amp_in.setRange(0, 100)
+        self.v3H_amp_in.setValue(0)
+        self.v3H_amp_in.setSingleStep(1)
+
+        self.v5H_amp_in = QDoubleSpinBox()
+        self.v5H_amp_in.setRange(0, 100)
+        self.v5H_amp_in.setValue(0)
+        self.v5H_amp_in.setSingleStep(1)
+
+        self.cos_phi_in = QDoubleSpinBox()
+        self.cos_phi_in.setRange(0, 1)
+        self.cos_phi_in.setValue(1)
+        self.cos_phi_in.setSingleStep(0.05)
 
         form_layout.addRow("Network Interface:", self.iface_in)
         form_layout.addRow("Destination MAC:", self.dst_mac_in)
@@ -526,12 +556,19 @@ class MainWindow(QMainWindow):
 
         self.start_button = QPushButton("Start Simulation")
         self.start_button.clicked.connect(self.start_simulation)
-        self.stop_button = QPushButton("Stop Simulation", enabled=False)
+
+        self.stop_button = QPushButton("Stop Simulation")
+        self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_simulation)
-        self.save_button = QPushButton("Save Configuration", enabled=True)
+
+        self.save_button = QPushButton("Save Configuration")
+        self.save_button.setEnabled(True)
         self.save_button.clicked.connect(self.save_config)
-        self.load_button = QPushButton("Load Configuration", enabled=True)
+
+        self.load_button = QPushButton("Load Configuration")
+        self.load_button.setEnabled(True)
         self.load_button.clicked.connect(self.load_config)
+
         controls_layout.addWidget(self.start_button)
         controls_layout.addWidget(self.stop_button)
         controls_layout.addWidget(self.save_button)
@@ -582,13 +619,15 @@ class MainWindow(QMainWindow):
         
         button_layout = QHBoxLayout()
         self.start_decode_button = QPushButton("Start Sniffing")
-        self.stop_decode_button = QPushButton("Stop Sniffing", enabled=False)
+        self.stop_decode_button = QPushButton("Stop Sniffing")
+        self.stop_decode_button.setEnabled(False)
         button_layout.addWidget(self.start_decode_button)
         button_layout.addWidget(self.stop_decode_button)
         decoder_layout.addLayout(button_layout)
         decoder_group.setLayout(decoder_layout)
         
-        self.decoder_output = QTextEdit(readOnly=True)
+        self.decoder_output = QTextEdit()
+        self.decoder_output.setReadOnly(True)
         self.decoder_output.setStyleSheet("font-family: 'Courier New', monospace; color: #000000;")
         
         layout.addWidget(decoder_group)
@@ -817,7 +856,7 @@ class MainWindow(QMainWindow):
         - status UP
         - mają adres IP
         """
-        win_ifaces = get_windows_if_list()
+        win_ifaces = scapy.arch.get_windows_if_list()
         stats = psutil.net_if_stats()
         addrs = psutil.net_if_addrs()
 
@@ -828,8 +867,8 @@ class MainWindow(QMainWindow):
             desc = iface.get("description", "")
             guid = iface.get("guid")
 
-            if not name or not guid:
-                continue
+            if not isinstance(name,str) or not isinstance(guid,str):    #jeśli name lub guid nie jest stringiem
+                continue                                                #pomiń i przejdź do kolejnego elementu pętli for
 
             # ✅ interfejs musi istnieć w psutil
             if name not in stats or name not in addrs:
